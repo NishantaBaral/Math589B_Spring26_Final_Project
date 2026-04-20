@@ -14,7 +14,7 @@ int main() {
     Eigen::EigenSolver<Eigen::Matrix4d> es(A);
 
     [[maybe_unused]] auto evals = es.eigenvalues();
-    auto evecs = es.eigenvectors();
+    [[maybe_unused]] auto evecs = es.eigenvectors();
 
     std::cout << "Eigenvalues:\n";
     for (int i = 0; i < evals.size(); ++i) {
