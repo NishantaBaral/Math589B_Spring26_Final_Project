@@ -133,13 +133,13 @@ Let the costate vector be
 The Hamiltonian is
 
 ```math
-\mathcal{H}=L+\lambda^T f.
+\mathbbb{\mathcal{H}}=L+\lambda^T f.
 ```
 
 Therefore,
 
 ```math
-\mathcal{H}(\theta,\phi,u,\lambda_1,\lambda_2)
+\mathbb{\mathcal{H}}(\theta,\phi,u,\lambda_1,\lambda_2)
 =
 (1-\cos\theta)
 +
@@ -158,13 +158,13 @@ Therefore,
 To find the optimal control, set
 
 ```math
-\frac{\partial \mathcal{H}}{\partial u}=0.
+\frac{\partial \mathbb{\mathcal{H}}}{\partial u}=0.
 ```
 
 Since
 
 ```math
-\frac{\partial \mathcal{H}}{\partial u}
+\frac{\partial \mathbb{\mathcal{H}}}{\partial u}
 =
 u+\lambda_2\cos\theta,
 ```
