@@ -67,20 +67,12 @@ $$
 where
 
 $$
-f(x,u)
-=
-\begin{pmatrix}
-\phi\\
-\sin(\theta)-\alpha\phi+u\cos(\theta)
-\end{pmatrix}.
-$$
+f(x,u) = \begin{pmatrix} \phi\\ \sin(\theta)-\alpha\phi+u\cos(\theta)\end{pmatrix}.$$
 
 The running cost is
 
 $$
-L(\theta,\phi,u)
-=
-(1-\cos\theta)+\frac12\phi^2+\frac12u^2.
+L(\theta,\phi,u)=(1-\cos\theta)+\frac12\phi^2+\frac12u^2.
 $$
 
 Let the costate vector be
