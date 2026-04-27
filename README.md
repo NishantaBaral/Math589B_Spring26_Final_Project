@@ -133,7 +133,7 @@ Let the costate vector be
 The Hamiltonian is
 
 ```math
-\mathbbb{\mathcal{H}}=L+\lambda^T f.
+\mathbb{\mathcal{H}}=L+\lambda^T f.
 ```
 
 Therefore,
