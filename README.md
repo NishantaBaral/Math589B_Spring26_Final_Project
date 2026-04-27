@@ -297,3 +297,5 @@ with optimal control
 ```math
 u^*=-\lambda_2\cos\theta.
 ```
+
+The goal of this project is to build a numerical solver which, for each input state $(\theta,\phi)$, computes the corresponding optimal costates $(\lambda_1,\lambda_2)$ and accumulated optimal cost $J$ using shooting method. Code is written in cuda and ran in a GPU for computation. 
