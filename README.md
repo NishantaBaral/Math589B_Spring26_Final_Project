@@ -17,16 +17,10 @@ $$
 \int_0^\infty \left[(1 - \cos \theta) + \frac{1}{2}\phi^2 + \frac{1}{2}u^2\right] dt
 $$
 
-Optimal control:
-$u^* = -\lambda_2 \cos(\theta)$
-
 ## Task
+Given: $\theta, \phi$
 
-Given:
-$\theta, \phi$
-
-Return:
-$\lambda_1, \lambda_2, J$
+Return: $\lambda_1, \lambda_2, J$
 
 ## Program Interface
 
@@ -35,4 +29,225 @@ $\lambda_1, \lambda_2, J$
 Output:
 `lambda1 lambda2 J`
 
-More details coming this week.
+Firstly, the analytical solution. We consider the controlled pendulum
+
+$$
+\ddot{\theta}
+=
+\sin(\theta)-\alpha \dot{\theta}+u\cos(\theta).
+$$
+
+Let
+
+$$
+\phi=\dot{\theta}.
+$$
+
+Then the state is
+
+$$
+x=(\theta,\phi).
+$$
+
+Therefore, the second-order equation becomes the first-order system
+
+$$
+\begin{aligned}
+\dot{\theta} &= \phi,\\
+\dot{\phi} &= \sin(\theta)-\alpha\phi+u\cos(\theta).
+\end{aligned}
+$$
+
+So
+
+$$
+\dot{x}=f(x,u),
+$$
+
+where
+
+$$
+f(x,u)
+=
+\begin{pmatrix}
+\phi\\
+\sin(\theta)-\alpha\phi+u\cos(\theta)
+\end{pmatrix}.
+$$
+
+The running cost is
+
+$$
+L(\theta,\phi,u)
+=
+(1-\cos\theta)+\frac12\phi^2+\frac12u^2.
+$$
+
+Let the costate vector be
+
+$$
+\lambda
+=
+\begin{pmatrix}
+\lambda_1\\
+\lambda_2
+\end{pmatrix}.
+$$
+
+The Hamiltonian is
+
+$$
+H=L+\lambda^T f.
+$$
+
+Therefore,
+
+$$
+H(\theta,\phi,u,\lambda_1,\lambda_2)
+=
+(1-\cos\theta)
++\frac12\phi^2
++\frac12u^2
++\lambda_1\phi
++\lambda_2
+\left(
+\sin\theta-\alpha\phi+u\cos\theta
+\right).
+$$
+
+To find the optimal control, set
+
+$$
+\frac{\partial H}{\partial u}=0.
+$$
+
+Since
+
+$$
+\frac{\partial H}{\partial u}
+=
+u+\lambda_2\cos\theta,
+$$
+
+we get
+
+$$
+u+\lambda_2\cos\theta=0.
+$$
+
+Therefore,
+
+$$
+u^*=-\lambda_2\cos\theta.
+$$
+
+Now substitute the optimal control back into the Hamiltonian. Since
+
+$$
+\frac12(u^*)^2
+=
+\frac12\lambda_2^2\cos^2\theta
+$$
+
+and
+
+$$
+\lambda_2u^*\cos\theta
+=
+-\lambda_2^2\cos^2\theta,
+$$
+
+we have
+
+$$
+\frac12(u^*)^2+\lambda_2u^*\cos\theta
+=
+-\frac12\lambda_2^2\cos^2\theta.
+$$
+
+Thus the effective Hamiltonian is
+
+$$
+H^*(\theta,\phi,\lambda_1,\lambda_2)
+=
+(1-\cos\theta)
++\frac12\phi^2
++\lambda_1\phi
++\lambda_2(\sin\theta-\alpha\phi)
+-\frac12\lambda_2^2\cos^2\theta.
+$$
+
+The costate equations are
+
+$$
+\dot{\lambda}_1
+=
+-\frac{\partial H^*}{\partial \theta},
+\qquad
+\dot{\lambda}_2
+=
+-\frac{\partial H^*}{\partial \phi}.
+$$
+
+Now compute
+
+$$
+\frac{\partial H^*}{\partial \theta}
+=
+\sin\theta
++\lambda_2\cos\theta
++\lambda_2^2\sin\theta\cos\theta.
+$$
+
+Therefore,
+
+$$
+\dot{\lambda}_1
+=
+-\sin\theta
+-\lambda_2\cos\theta
+-\lambda_2^2\sin\theta\cos\theta.
+$$
+
+Also,
+
+$$
+\frac{\partial H^*}{\partial \phi}
+=
+\phi+\lambda_1-\alpha\lambda_2.
+$$
+
+Therefore,
+
+$$
+\dot{\lambda}_2
+=
+-\phi-\lambda_1+\alpha\lambda_2.
+$$
+
+Hence the state-costate system is
+
+$$
+\begin{aligned}
+\dot{\theta}
+&=
+\phi,\\
+\dot{\phi}
+&=
+\sin\theta-\alpha\phi-\lambda_2\cos^2\theta,\\
+\dot{\lambda}_1
+&=
+-\sin\theta
+-\lambda_2\cos\theta
+-\lambda_2^2\sin\theta\cos\theta,\\
+\dot{\lambda}_2
+&=
+-\phi-\lambda_1+\alpha\lambda_2.
+\end{aligned}
+$$
+
+with optimal control
+
+$$
+u^*=-\lambda_2\cos\theta.
+$$
