@@ -6,4 +6,4 @@ struct Result {
     double cost;
 };
 
-Result solve(double theta, double phi);
+Result solve(double theta, double phi, double alpha);
