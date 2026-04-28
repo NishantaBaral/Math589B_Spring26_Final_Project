@@ -1,12 +1,12 @@
+NVCC = nvcc
+CFLAGS = -O3
+
 TARGET = solver
-NVCC   = nvcc
-NVCCFLAGS = -O2
 
+all: $(TARGET)
 
-SRC = src/main.cu src/solver.cu
-
-all:
-	$(NVCC) $(NVCCFLAGS) $(SRC) -o $(TARGET)
+$(TARGET): src/main.cpp src/solver.cu src/solver.hpp
+	$(NVCC) $(CFLAGS) src/main.cpp src/solver.cu -o $(TARGET)
 
 clean:
 	rm -f $(TARGET)
