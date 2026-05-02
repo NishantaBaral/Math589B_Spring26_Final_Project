@@ -1,6 +1,8 @@
 import numpy as np
 
-#firstly solving the Ricatti equation.
+# ═══════════════════════════════════════════════════════════════
+# 1. ARE Solver
+# ═══════════════════════════════════════════════════════════════
 def solve_are(alpha):
     A   = np.array([[0.0, 1.0], [1.0, -alpha]])
     BBT = np.array([[0.0, 0.0], [0.0, 1.0]])
@@ -18,7 +20,9 @@ def solve_are(alpha):
     S  = np.real(V[2:] @ np.linalg.inv(V[:2]))
     return 0.5 * (S + S.T)
 
-#state costate equation
+# ═══════════════════════════════════════════════════════════════
+# 2. State-Costate Equation
+# ═══════════════════════════════════════════════════════════════
 def pmp_rhs(y, alpha):
     """ẏ = f(y),   y = [θ, φ, λ₁, λ₂]"""
     th, ph, l1, l2 = y
@@ -30,11 +34,9 @@ def pmp_rhs(y, alpha):
         -ph - l1      + alpha*l2,
     ])
 
-
 # ═══════════════════════════════════════════════════════════════
-# 3.  Fixed-step RK4
+# 3. Fixed-step RK4
 # ═══════════════════════════════════════════════════════════════
-
 def rk4(alpha, y0, T, n):
     """
     Integrate  ẏ = f(y)  from 0 to T with n equal steps.
@@ -42,11 +44,12 @@ def rk4(alpha, y0, T, n):
     """
     h = T / n
     t = np.linspace(0.0, T, n + 1)
-    Y = np.empty((4, n + 1));  Y[:, 0] = y0
+    Y = np.empty((4, n + 1))
+    Y[:, 0] = y0
     y = y0.astype(float).copy()
 
     for k in range(n):
-        k1 = pmp_rhs(y,             alpha)
+        k1 = pmp_rhs(y,              alpha)
         k2 = pmp_rhs(y + 0.5*h*k1, alpha)
         k3 = pmp_rhs(y + 0.5*h*k2, alpha)
         k4 = pmp_rhs(y +     h*k3, alpha)
@@ -59,12 +62,10 @@ def rk4(alpha, y0, T, n):
 
     return t, Y, True
 
-
 # ═══════════════════════════════════════════════════════════════
-# 4.  Forward shooting residual
-#     F(λ₀) = λ(T) − S·x(T)  →  0  on the stable manifold
+# 4. Forward shooting residual
+#    F(λ₀) = λ(T) − S·x(T)  →  0  on the stable manifold
 # ═══════════════════════════════════════════════════════════════
-
 def shoot_residual(lam0, x0, alpha, S, T, n):
     y0 = np.array([x0[0], x0[1], lam0[0], lam0[1]])
     t, Y, ok = rk4(alpha, y0, T, n)
@@ -73,11 +74,9 @@ def shoot_residual(lam0, x0, alpha, S, T, n):
     xT, lamT = Y[:2, -1], Y[2:, -1]
     return lamT - S @ xT          # terminal costate condition
 
-
 # ═══════════════════════════════════════════════════════════════
-# 5.  Newton with central-diff Jacobian + Armijo line search
+# 5. Newton with central-diff Jacobian + Armijo line search
 # ═══════════════════════════════════════════════════════════════
-
 def newton(F, lam0, tol=1e-9, max_iter=20):
     x  = lam0.astype(float).copy()
     Fx = F(x)
@@ -117,33 +116,14 @@ def newton(F, lam0, tol=1e-9, max_iter=20):
 
     return x, float(np.linalg.norm(Fx))
 
-
 # ═══════════════════════════════════════════════════════════════
-# 6.  T-continuation:  T_min → T_max  (warm-started Newton)
-#
-#     Why this works:
-#       • At T_min≈0.5s: exp(σ·T)≈2, Newton converges in 1–2 steps.
-#       • At each step: ΔT small → previous solution is a good warm start.
-#       • At T_max: x(T)≈0, so λ(T)=S·x(T) is accurate.
+# 6. T-continuation:  T_min → T_max  (warm-started Newton)
 # ═══════════════════════════════════════════════════════════════
-
 def t_continuation(x0, alpha, S, T_min, T_max, K_steps, n_per_s):
     """
     Solve  F(λ₀; T) = λ(T) − S·x(T) = 0  for increasing T.
-
-    Parameters
-    ----------
-    T_min, T_max : float — horizon range
-    K_steps      : int   — number of continuation steps
-    n_per_s      : int   — integration steps per second
-
-    Returns
-    -------
-    lam_opt : (2,) array — converged λ(0)
-    res     : float      — final residual norm
     """
     lam = S @ x0                      # LQR initial guess (accurate for T→0)
-
     Ts  = np.linspace(T_min, T_max, K_steps)
 
     for k, T in enumerate(Ts):
@@ -169,22 +149,18 @@ def t_continuation(x0, alpha, S, T_min, T_max, K_steps, n_per_s):
 
     return lam, res
 
-
 # ═══════════════════════════════════════════════════════════════
-# 7.  Accumulated cost  J = ∫ L dt  (trapezoid)
+# 7. Accumulated cost  J = ∫ L dt  (trapezoid)
 # ═══════════════════════════════════════════════════════════════
-
 def accumulated_cost(t, Y):
     th, ph, _, l2 = Y[0], Y[1], Y[2], Y[3]
     u  = -l2 * np.cos(th)
     L  = 0.5*ph**2 + (1.0 - np.cos(th)) + 0.5*u**2
     return float(np.sum(0.5 * (L[:-1] + L[1:]) * np.diff(t)))
 
-
 # ═══════════════════════════════════════════════════════════════
-# 8.  MAIN
+# 8. MAIN
 # ═══════════════════════════════════════════════════════════════
-
 def main():
     SEP = "=" * 64
     print(SEP)
@@ -193,9 +169,9 @@ def main():
     print(SEP)
 
     # ── Inputs ──────────────────────────────────────────────────────
-    alpha  = 0.1
-    theta0 = 0
-    phi0   = 1
+    alpha  = 0.2
+    theta0 = 3
+    phi0   = -3
     x0     = np.array([theta0, phi0])
 
     # ── 1. ARE ──────────────────────────────────────────────────────
@@ -207,7 +183,7 @@ def main():
     poles = np.linalg.eigvals(Acl)
 
     print(f"         S  = | {S[0,0]:+.6f}  {S[0,1]:+.6f} |")
-    print(f"               | {S[1,0]:+.6f}  {S[1,1]:+.6f} |")
+    print(f"              | {S[1,0]:+.6f}  {S[1,1]:+.6f} |")
     print(f"         K  = [ {K[0]:+.6f}  {K[1]:+.6f} ]")
     print(f"         CL poles: {poles[0].real:+.6f},  {poles[1].real:+.6f}")
     print(f"         LQR initial guess λ₀ = [{(S@x0)[0]:+.4f}, {(S@x0)[1]:+.4f}]")
@@ -262,15 +238,14 @@ def main():
     print(SEP)
     print("  RESULTS")
     print(SEP)
-    print(f"  λ₁(0)                 =  {l1:+.8f}")
-    print(f"  λ₂(0)                 =  {l2:+.8f}")
+    print(f"  λ₁(0)                  =  {l1:+.8f}")
+    print(f"  λ₂(0)                  =  {l2:+.8f}")
     print(f"  u*(0) = −λ₂·cosθ₀    =  {u0:+.8f}")
-    print(f"  J*    (accum. cost)   =  {J:.8f}")
+    print(f"  J* (accum. cost)   =  {J:.8f}")
     print(f"  x₀ᵀ S x₀ (LQR val.)  =  {lqr_v:.8f}  ← linearised lower bound")
     print(SEP)
 
     return l1, l2, J
-
 
 if __name__ == "__main__":
     main()
