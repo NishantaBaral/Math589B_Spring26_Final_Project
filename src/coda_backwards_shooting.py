@@ -1,9 +1,8 @@
 import numpy as np
 from scipy.linalg import expm
 
-# ═══════════════════════════════════════════════════════════════
-# 1. ARE Solver
-# ═══════════════════════════════════════════════════════════════
+#Ricatti eqn solver
+# H = [[ A,-B B^T ][-Q,-A^T]] and the stable eigenspace of H gives the Ricatti solution
 def solve_are(alpha):
     A   = np.array([[0.0, 1.0], [1.0, -alpha]])
     BBT = np.array([[0.0, 0.0], [0.0, 1.0]])
@@ -12,31 +11,25 @@ def solve_are(alpha):
     vals, vecs = np.linalg.eig(H)
     mask = vals.real < -1e-10
     V = vecs[:, mask]
+    #first two rows of V are x part, last two rows are lambda part. So S = lambda*x^{-1}
     S = np.real(V[2:] @ np.linalg.inv(V[:2]))
+    #force S to be symmetric
     return 0.5 * (S + S.T)
 
-# ═══════════════════════════════════════════════════════════════
-# 2. PMP right-hand side
-# ═══════════════════════════════════════════════════════════════
+#state costate dynamics. Good ol' PMP. 
 def pmp_rhs(y, alpha):
     th, ph, l1, l2 = y
-    s, c = np.sin(th), np.cos(th)
+    sin, cos = np.sin(th), np.cos(th)
     return np.array([
         ph,
-        s - alpha * ph - l2 * c * c,
-        -s - l2 * c - l2 * l2 * s * c,
+        sin - alpha * ph - l2 * cos * cos,
+        -sin - l2 * cos - l2 * l2 * sin * cos,
         -ph - l1 + alpha * l2,
     ])
 
-# ═══════════════════════════════════════════════════════════════
-# 3. Backward RK4 with cost accumulation
-#
-#    Integrates dy/ds = -f(y), s ∈ [0, T_back].
-#    In forward time this traces the trajectory from x₀ (at s=T_back)
-#    back to the patch ξ (at s=0).
-#    Cost is accumulated along the path (same points, same integral).
-# ═══════════════════════════════════════════════════════════════
+#rk4 backwards
 def rk4_backward(y0, alpha, T, n):
+    #here y0 is the patch point on the stable manifold
     h = T / n
     y = y0.astype(float).copy()
     J = 0.0
@@ -62,107 +55,115 @@ def rk4_backward(y0, alpha, T, n):
             return y, J, False
     return y, J, True
 
-# ═══════════════════════════════════════════════════════════════
-# 4. Newton solver (central-diff Jacobian + Armijo)
-# ═══════════════════════════════════════════════════════════════
+#Newton+Armijo
+#F is the resiual fn. We want to solve F(x) = 0 where x is a point on the stable manifold patch. 
+#F(x) = (theta \tilde - theta0, phi \tilde - phi0) where
+#  So we want to adjust the patch coordinate x until the backward-integrated stable-manifold point lands on give initial condition (theta0, phi0).
 def newton(F, x0, tol=1e-12, max_iter=25):
     x = x0.astype(float).copy()
     Fx = F(x)
     for it in range(max_iter):
         nrm = float(np.linalg.norm(Fx))
+        #square the norm and see if jt works 
         if nrm < tol:
             break
+        #we are choosing a finite-difference step size epsilon for approximating the Jacobian.
         eps = max(1e-8, 1e-6 * max(1.0, np.linalg.norm(x)))
         J = np.zeros((2, 2))
+        #loop over the two dimensions of x to compute the Jacobian.
+        #  We perturb each coordinate of x by epsilon and evaluate F at the perturbed points to estimate the Jacobian.
         for i in range(2):
             xp = x.copy(); xp[i] += eps
             xm = x.copy(); xm[i] -= eps
+            #evlaute the residual at two perturbed points to get a finite-difference approximation of the Jacobian column.
             Fp, Fm = F(xp), F(xm)
+            #use central difference if Fp and Fm dont blow up, otherwise use forward difference to avoid NaNs.
             if np.all(np.isfinite(Fp + Fm)):
                 J[:, i] = (Fp - Fm) / (2 * eps)
             else:
                 J[:, i] = (F(xp) - Fx) / eps
         try:
-            dx = np.linalg.solve(J, -Fx)
+            dx = np.linalg.solve(J, -Fx) #solve J dx = -Fx to get the Newton step
         except np.linalg.LinAlgError:
+            #some error protection against singular Jacobian
             dx = -0.01 * Fx
+        #Armijo line search: we want to ensure that the new point x + step*dx actually reduces the norm of the residual F.
         step = 1.0
+        #do Armijo backtracking with 12 step sizes
         for _ in range(12):
             Ft = F(x + step * dx)
             if np.all(np.isfinite(Ft)) and np.linalg.norm(Ft) < nrm * (1 - 1e-4 * step):
                 break
             step *= 0.5
-        x = x + step * dx
-        Fx = F(x)
+        x = x + step * dx #Actal update Newton w/ accepted step size
+        Fx = F(x) #evaluate the residual at the new point for the next iteration
     return x, float(np.linalg.norm(Fx))
 
-# ═══════════════════════════════════════════════════════════════
-# 5. Full solver
-#
-#    Backward shooting from the stable-manifold patch:
-#    1. Near origin, stable manifold ≈ λ = S·x (LQR).
-#    2. Pick small ξ, set patch point y = (ξ, S·ξ).
-#    3. Integrate PMP backward for T_back seconds.
-#       Off-manifold errors DECAY → self-correcting.
-#    4. Newton finds ξ s.t. x_backward(T_back) = x₀.
-#    5. λ(0) = costate at backward endpoint.
-#    6. Cost = backward path integral + ξᵀSξ (LQR tail).
-# ═══════════════════════════════════════════════════════════════
+# Full solver
 def solve(theta0, phi0, alpha):
     S = solve_are(alpha)
     x0 = np.array([theta0, phi0])
 
-    # Trivial case
+    # Trivial case solve ARE directly
     if np.linalg.norm(x0) < 1e-15:
         lam = S @ x0
-        return lam[0], lam[1], float(x0 @ S @ x0)
+        return lam[0], lam[1], 0.5*float(x0 @ S @ x0)
 
     # Closed-loop system for initial guess
     A   = np.array([[0., 1.], [1., -alpha]])
+    #Acl​=A−BBTS. In our case, BBT = [[0, 0], [0, 1]], so BBT @ S just picks out the second row of S and zeros out the first row.
+    # So Acl is A with the second row modified by subtracting S[1, :].
     Acl = A - np.outer([0., 1.], S[1, :])
+    #eigenvalues
     poles = np.linalg.eigvals(Acl)
     sigma_slow = min(abs(p.real) for p in poles)
 
-    # Backward horizon: long enough for |ξ| to be tiny
+    #choose backward integration time
+
     T_back = max(6.0, 5.0 / sigma_slow + 0.3 * abs(phi0))
     T_back = min(T_back, 20.0)
     n_back = max(5000, int(T_back * 800))
 
-    # Initial guess: ξ = exp(Acl·T_back)·x₀ (tiny near origin)
+    # Computes an initial guess for the near-origin patch coordinate
     xi_init = expm(Acl * T_back) @ x0
 
-    # Newton: find ξ s.t. backward(ξ, S·ξ) lands on x₀
+    # define theshooting residual function
     def F(xi):
+        #Compute the local costate on the Riccati patch
         lam_xi = S @ xi
+        #build the pmp point 
         y_patch = np.array([xi[0], xi[1], lam_xi[0], lam_xi[1]])
+        #Integrates this patch point backward through the PMP system.
         y_end, _, ok = rk4_backward(y_patch, alpha, T_back, n_back)
         if not ok:
             return np.array([1e6, 1e6])
         return y_end[:2] - x0
-
+    
+    #run newton
     xi_opt, res = newton(F, xi_init)
 
-    # Final backward integration: extract λ(0) and cost
+    # Final backward integration: extract lambda(0) and cost
     lam_xi = S @ xi_opt
+    #Build the refined patch point on the stable manifold  
     y_patch = np.array([xi_opt[0], xi_opt[1], lam_xi[0], lam_xi[1]])
+    #integrate back one last time
     y_end, J_path, ok = rk4_backward(y_patch, alpha, T_back, n_back)
 
+    #extract intial cosate 
     l1 = float(y_end[2])
     l2 = float(y_end[3])
 
-    # Total cost = path integral (x₀ → ξ) + LQR tail (ξ → origin)
-    J_tail = float(xi_opt @ S @ xi_opt)
+    # compute cost + add tail cost straight from Ricatti eqn. 
+    J_tail = 0.5*float(xi_opt @ S @ xi_opt)
     J = J_path + J_tail
 
     return l1, l2, J
 
-# ═══════════════════════════════════════════════════════════════
-# 6. Main
-# ═══════════════════════════════════════════════════════════════
+#driver code 
 def main():
     alpha  = 0.2
-    theta0 = 0
-    phi0   = 1
+    theta0 = 2
+    phi0   = -2
     l1, l2, J = solve(theta0, phi0, alpha)
     print(f"{l1:.10f} {l2:.10f} {J:.10f}")
 
