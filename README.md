@@ -299,3 +299,6 @@ u^*=-\lambda_2\cos\theta.
 ```
 
 The goal of this project is to build a numerical solver which, for each input state $(\theta,\phi)$, computes the corresponding optimal costates $(\lambda_1,\lambda_2)$ and accumulated optimal cost $J$ using shooting method. Code is written in cuda and ran in a GPU for computation. 
+
+The algorithm for implementation in Cuda is as follows:
+<img width="721" height="905" alt="Screenshot 2026-05-09 at 10 00 26 PM" src="https://github.com/user-attachments/assets/050abf7c-ee2e-49e7-bc51-6a8b4a6b76da" />
