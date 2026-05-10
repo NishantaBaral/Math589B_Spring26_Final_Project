@@ -1,6 +1,7 @@
 #define EIGEN_NO_CUDA
 #define EIGEN_DONT_VECTORIZE
 
+
 #include "solver.hpp"
 
 #include <cuda_runtime.h>
@@ -17,6 +18,8 @@
 #include <utility>
 #include <vector>
 
+
+//store one PMP state (theta, phi, lambda1, lambda2, cost)
 struct State {
     double th;
     double ph;
@@ -25,10 +28,12 @@ struct State {
     double cost;
 };
 
+//This stores two 4D stable basis vectors, can create other canddidate initial conditions by linear combinations of these two vectors.
 struct Basis {
     double v[8];
 };
 
+//store the result of one candidate trajectory. store patch coordinate, final PMP state, accumulated cost, squared distance to target, and whether the integration survived.
 struct Candidate {
     double a;
     double b;
@@ -40,7 +45,7 @@ struct Candidate {
     double dist2;
     int ok;
 };
-
+//some  CUDA error checking boilerplate, no idea what it does but it seems important to call after every CUDA API call so here it is.
 static void gpu_check(cudaError_t e, const char* file, int line) {
     if (e != cudaSuccess) {
         std::fprintf(stderr, "CUDA error at %s:%d: %s\n",
@@ -51,6 +56,8 @@ static void gpu_check(cudaError_t e, const char* file, int line) {
 
 #define GPU_CHECK(x) gpu_check((x), __FILE__, __LINE__)
 
+
+//the state costate eqn, can run on both cpu and gpu
 __host__ __device__
 static State rhs_state(const State& y, double alpha) {
     const double st = sin(y.th);
@@ -68,6 +75,7 @@ static State rhs_state(const State& y, double alpha) {
     return f;
 }
 
+//cpu/gpu helper, add a scaled version of k to y, used in the RK4 integrator below
 __host__ __device__
 static State add_scaled(const State& y, const State& k, double h) {
     State z;
@@ -79,6 +87,7 @@ static State add_scaled(const State& y, const State& k, double h) {
     return z;
 }
 
+//performs one step of good ol' rk4
 __host__ __device__
 static State rk4_step(const State& y, double alpha, double dt) {
     const State k1 = rhs_state(y, alpha);
@@ -103,6 +112,7 @@ static double sqr(double x) {
     return x * x;
 }
 
+//the actual GPU kernel
 __global__
 static void patch_kernel(Candidate* out,
                          int grid_n,
@@ -113,22 +123,29 @@ static void patch_kernel(Candidate* out,
                          Basis B,
                          double target_th,
                          double target_ph) {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x; //this line means that each thread will have a unique idx, and the kernel will be launched with enough threads to cover all points in the grid. 
+    //So each thread will be responsible for simulating one trajectory starting from a point in the patch.
     const int total = grid_n * grid_n;
+    //total number of candidate in the grid, we will have it 49.
 
     if (idx >= total) {
         return;
     }
+    //extra gpu threads will do nothing
 
+    //convert idx to  to grid coordinate (i,j)
     const int i = idx / grid_n;
     const int j = idx - i * grid_n;
 
+    //map grid coordinate to patch coordinate (xi, xj) in [-1, 1] x [-1, 1]
     const double xi = -1.0 + 2.0 * static_cast<double>(i) / static_cast<double>(grid_n - 1);
     const double xj = -1.0 + 2.0 * static_cast<double>(j) / static_cast<double>(grid_n - 1);
 
+    //scale patch coordinate by radius to get initial condition on the stable manifold
     const double a = radius * xi;
     const double b = radius * xj;
 
+    //build initial state from patch coordinate using the stable basis
     State y;
     y.th   = B.v[0] * a + B.v[4] * b;
     y.ph   = B.v[1] * a + B.v[5] * b;
@@ -149,7 +166,7 @@ static void patch_kernel(Candidate* out,
             break;
         }
     }
-
+    //store the result in the output array, we will copy this back to the CPU and sort by distance to target to get good initial conditions for the Newton refinement step.
     Candidate c;
     c.a = a;
     c.b = b;
@@ -159,7 +176,7 @@ static void patch_kernel(Candidate* out,
     c.l2 = y.l2;
     c.cost = -y.cost;
     c.ok = ok;
-
+//Compute squared shooting residual and write this candidate into the gpu memory. This is all the gpu work.
     if (ok) {
         c.dist2 = sqr(y.th - target_th) + sqr(y.ph - target_ph);
     } else {
@@ -169,6 +186,7 @@ static void patch_kernel(Candidate* out,
     out[idx] = c;
 }
 
+//cpu function, create a 4*4 matrix from linearized PMP dynamics, compute eigval, eigvec, sort eigval by real part, and take the two most stable eigvecs. 
 static Eigen::Matrix<double, 4, 2> stable_basis(double alpha) {
     Eigen::Matrix4d A;
 
@@ -199,10 +217,12 @@ static Eigen::Matrix<double, 4, 2> stable_basis(double alpha) {
             Vs.col(j) /= n;
         }
     }
-
+//so we got our stable subsapce basis 
     return Vs;
 }
 
+//CPU function, do the same kind of integration as the GPU kernel, but for one candidate.
+//very important to have this on the CPU so we can do the Newton refinement step which requires a lot of sequential steps and is not very parallelizable.
 static Eigen::Matrix2d stable_gain(double alpha) {
     const Eigen::Matrix<double, 4, 2> Vs = stable_basis(alpha);
 
@@ -259,6 +279,8 @@ static State integrate_ab(const Basis& B,
     return y;
 }
 
+//newton's refinement 
+
 static Candidate refine_ab_newton(const Basis& B,
                                   double a0,
                                   double b0,
@@ -271,7 +293,7 @@ static Candidate refine_ab_newton(const Basis& B,
 
     double a = a0;
     double b = b0;
-
+//start from a gpu seed
     State y = integrate_ab(B, a, b, alpha, T, steps);
     double best_dist2 = sqr(y.th - target_th) + sqr(y.ph - target_ph);
 
@@ -282,7 +304,9 @@ static Candidate refine_ab_newton(const Basis& B,
 
         const double ea = std::max(1.0e-12, 1.0e-5 * std::max(std::fabs(a), 1.0e-8));
         const double eb = std::max(1.0e-12, 1.0e-5 * std::max(std::fabs(b), 1.0e-8));
-
+//cpu integration to compute the Jacobian, we will do two additional integrations with small perturbations in a and b to compute finite difference approximations of the Jacobian of the shooting function. 
+//This is the main reason we need to do this on the CPU, since we need to do these sequential integrations and they are not very parallelizable.
+//AI translated this from my python code, so it might look a bit weird since I was using a lot of numpy broadcasting and stuff in the python code, but here we have to write everything out explicitly.
         const State ya = integrate_ab(B, a + ea, b, alpha, T, steps);
         const State yb = integrate_ab(B, a, b + eb, alpha, T, steps);
 
@@ -348,16 +372,21 @@ static Candidate refine_ab_newton(const Basis& B,
     return c;
 }
 
+//most imp part
+//this function itself runs on CPU. It manages GPU work.
 static std::vector<Candidate> gpu_patch_search(double theta,
                                                double phi,
                                                double alpha,
                                                const Basis& B) {
-    const int grid_n = 49;
+    const int grid_n = 49; 
+    //we will search a 49x49 grid of initial conditions on the stable manifold patch, this number is somewhat arbitrary but it seems to give good coverage of the patch without being too slow.
+    //also set backwards integration time and step size for coarse GPU search 
     const int n = grid_n * grid_n;
     const double T = 16.0;
     const int steps = 1000;
     const double dt = -T / static_cast<double>(steps);
 
+    //search many patch radii
     const std::vector<double> radii = {
         1.0e-10, 3.0e-10,
         1.0e-9,  3.0e-9,
@@ -369,6 +398,8 @@ static std::vector<Candidate> gpu_patch_search(double theta,
         1.0e-3
     };
 
+    //allocate output memory on GPU
+
     Candidate* d_out = nullptr;
     GPU_CHECK(cudaMalloc(&d_out, n * sizeof(Candidate)));
 
@@ -376,9 +407,11 @@ static std::vector<Candidate> gpu_patch_search(double theta,
     std::vector<Candidate> all;
     all.reserve(n * radii.size());
 
+    //cpu vectors to store results, we will copy the results from the GPU to these vectors and then sort them by distance to target to get good initial conditions for the Newton refinement step.
     const int block = 256;
     const int blocks = (n + block - 1) / block;
-
+    
+//This launches the GPU kernel. This is where the GPU actually starts doing the coarse candidate integrations.
     for (double radius : radii) {
         patch_kernel<<<blocks, block>>>(d_out,
                                         grid_n,
@@ -389,7 +422,7 @@ static std::vector<Candidate> gpu_patch_search(double theta,
                                         B,
                                         theta,
                                         phi);
-
+        
         GPU_CHECK(cudaGetLastError());
         GPU_CHECK(cudaDeviceSynchronize());
 
@@ -397,7 +430,7 @@ static std::vector<Candidate> gpu_patch_search(double theta,
                              d_out,
                              n * sizeof(Candidate),
                              cudaMemcpyDeviceToHost));
-
+//Copy candidate results from GPU memory back to CPU memory.
         for (const Candidate& c : h) {
             if (c.ok && std::isfinite(c.dist2)) {
                 all.push_back(c);
@@ -406,7 +439,7 @@ static std::vector<Candidate> gpu_patch_search(double theta,
     }
 
     GPU_CHECK(cudaFree(d_out));
-
+//CPU sorts candidates by distance.So the GPU finds many crude candidates; the CPU decides which ones are good.
     std::sort(all.begin(), all.end(),
               [](const Candidate& x, const Candidate& y) {
                   return x.dist2 < y.dist2;
@@ -415,12 +448,14 @@ static std::vector<Candidate> gpu_patch_search(double theta,
     return all;
 }
 
+//kinda driver function.
+
 static Candidate solve_for_well(const Basis& B,
                                 double theta_eff,
                                 double phi,
                                 double alpha,
                                 int max_trials) {
-    std::vector<Candidate> seeds = gpu_patch_search(theta_eff, phi, alpha, B);
+    std::vector<Candidate> seeds = gpu_patch_search(theta_eff, phi, alpha, B); //CPU asks GPU to generate seeds.
 
     Candidate best;
     best.a = 0.0; best.b = 0.0;
@@ -431,7 +466,7 @@ static Candidate solve_for_well(const Basis& B,
     best.ok = 0;
 
     const int trials = std::min<int>(max_trials, static_cast<int>(seeds.size()));
-
+    //CPU refines the best few GPU seeds.
     for (int i = 0; i < trials; ++i) {
         Candidate c = refine_ab_newton(B,
                                        seeds[i].a,
@@ -449,15 +484,16 @@ static Candidate solve_for_well(const Basis& B,
 }
 
 Result solve(double theta, double phi, double alpha) {
+    //Main CPU solver. First check if we are already at the target, if so return zero cost solution.
     if (std::fabs(theta) < 1.0e-14 && std::fabs(phi) < 1.0e-14) {
         return {0.0, 0.0, 0.0};
     }
 
     const Basis B = make_basis_struct(alpha);
-
+    //Because pendulum angle is periodic, it considers nearby wells:
     const double TWO_PI = 2.0 * M_PI;
     const int    k_round = static_cast<int>(std::lround(theta / TWO_PI));
-
+    //Try several nearby angle shifts.
     int k_candidates_arr[] = {
         k_round,
         0,
@@ -499,7 +535,7 @@ Result solve(double theta, double phi, double alpha) {
             best_k = k;
         }
     }
-
+    //Choose the converged trajectory with lowest cost.
     if (best_global.ok) {
         return {best_global.l1, best_global.l2, best_global.cost};
     }
